@@ -1,0 +1,76 @@
+name: Build and test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    env:
+      GOLAND_BUILD: GO-263.7307.211
+      GOLAND_DOWNLOAD: https://download.jetbrains.com/go/goland-2026.3.win.zip
+      GOLAND_SHA256: 75566e71d1d1f1f2f9cc1801e2f1eccb0e8e5a00b60ca89a85222f1a117321de
+
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.14"
+
+      - name: Download and verify GoLand SDK
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'goland.zip'
+          $sdkRoot = Join-Path $env:RUNNER_TEMP 'goland-sdk'
+          curl.exe --fail --location --silent --show-error --retry 3 --retry-all-errors --connect-timeout 30 --max-time 900 --output $archive $env:GOLAND_DOWNLOAD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $env:GOLAND_SHA256) {
+            throw 'GoLand archive SHA-256 mismatch'
+          }
+
+          New-Item -ItemType Directory -Path $sdkRoot | Out-Null
+          tar.exe -xf $archive -C $sdkRoot
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $candidates = @(
+            Get-Item -LiteralPath $sdkRoot
+            Get-ChildItem -LiteralPath $sdkRoot -Directory
+          )
+          $homes = @($candidates | Where-Object {
+            (Test-Path -LiteralPath (Join-Path $_.FullName 'build.txt')) -and
+            (Test-Path -LiteralPath (Join-Path $_.FullName 'jbr/bin/java.exe'))
+          })
+          if ($homes.Count -ne 1) { throw 'Expected one GoLand SDK with a bundled JBR' }
+          $ideHome = $homes[0].FullName
+          $build = (Get-Content -Raw -LiteralPath (Join-Path $ideHome 'build.txt')).Trim()
+          if ($build -ne $env:GOLAND_BUILD) { throw "Unexpected GoLand build $build" }
+          "GOLAND_HOME=$ideHome" >> $env:GITHUB_ENV
+
+      - name: Run tests and build plugin ZIP
+        id: package
+        shell: pwsh
+        run: |
+          python -X utf8 build.py --ide-home "$env:GOLAND_HOME" test packagePlugin
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $packages = @(Get-ChildItem -LiteralPath '.tmp/build/distributions' -Filter 'ide-mcp-tools-*.zip' -File)
+          if ($packages.Count -ne 1) { throw 'Expected one installable plugin ZIP' }
+          "path=$($packages[0].FullName)" >> $env:GITHUB_OUTPUT
+
+      - name: Upload plugin ZIP
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          path: ${{ steps.package.outputs.path }}
+          archive: false
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14

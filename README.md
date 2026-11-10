@@ -43,6 +43,8 @@ python -X utf8 build.py --ide-home "C:/path/to/GoLand" test packagePlugin
 
 安装包写到 `.tmp/build/distributions/ide-mcp-tools-0.1.4.zip`。
 
+GitHub 的 **Actions → Build and test** 会在推送到 `main` 或向 `main` 发起拉取请求时运行，也可以手动触发。工作流校验并使用固定的 GoLand 构建号 `263.7307.211`，通过单测后可从该次运行的 **Artifacts** 下载插件 ZIP。
+
 0.1.4 的运行态验证使用 Windows 上的 GoLand 2026.3（`263.7307.211`）。测试从断点和手动暂停恢复后立即停止，连续 8 轮均在默认 10 秒内正常退出。
 
 ## JetBrains Marketplace 提交
