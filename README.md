@@ -56,3 +56,7 @@ GitHub 的 **Actions → Build and test** 会在推送到 `main` 或向 `main` �
 首次上传需要填写有效的发布者网站和联系邮箱，提供原创的 40 × 40 SVG 图标和最终用户许可协议。选择开源许可时还需填写可访问的源码链接。这些发布资料需在提交前补齐。JetBrains 会对上传包做兼容性检查和人工审核。
 
 [Marketplace 审核要求](https://plugins.jetbrains.com/docs/marketplace/jetbrains-marketplace-approval-guidelines.html) · [首次上传流程](https://plugins.jetbrains.com/docs/marketplace/uploading-a-new-plugin.html)
+
+## 开源许可
+
+本项目采用 [MIT 许可证](LICENSE)。插件安装包也包含许可正文。

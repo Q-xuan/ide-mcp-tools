@@ -20,6 +20,9 @@ dependencies {
 }
 kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21) } }
 tasks.test { useJUnit() }
+tasks.jar {
+    from("LICENSE") { into("META-INF") }
+}
 tasks.register<Zip>("packagePlugin") {
     dependsOn(tasks.jar)
     archiveFileName.set("ide-mcp-tools-${project.version}.zip")
