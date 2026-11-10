@@ -1,0 +1,6 @@
+<idea-plugin>
+    <extensions defaultExtensionNs="com.intellij">
+        <projectService serviceInterface="dev.feiyu.idemcp.DebugStopGuard"
+                        serviceImplementation="dev.feiyu.idemcp.GoDebugStopGuard"/>
+    </extensions>
+</idea-plugin>

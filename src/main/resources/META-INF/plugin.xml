@@ -1,0 +1,21 @@
+<idea-plugin>
+    <id>dev.feiyu.ide-mcp</id>
+    <name>IDE MCP Tools</name>
+    <version>0.1.4</version>
+    <vendor>yuseus</vendor>
+    <idea-version since-build="263" until-build="263.*"/>
+    <description>Adds run session control, debugging, and explicit database writes to GoLand's built-in MCP server.</description>
+    <change-notes>Fixes a race when stopping a Go debug session immediately after resuming it.</change-notes>
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.mcpServer</depends>
+    <depends optional="true" config-file="database.xml">com.intellij.database</depends>
+    <depends optional="true" config-file="go.xml">org.jetbrains.plugins.go</depends>
+    <projectListeners>
+        <listener class="dev.feiyu.idemcp.RunIdentityListener" topic="com.intellij.execution.ExecutionListener"/>
+    </projectListeners>
+    <extensions defaultExtensionNs="com.intellij.mcpServer">
+        <mcpToolset implementation="dev.feiyu.idemcp.RunToolset"/>
+        <mcpToolset implementation="dev.feiyu.idemcp.DebugToolset"/>
+        <mcpToolset implementation="dev.feiyu.idemcp.BreakpointToolset"/>
+    </extensions>
+</idea-plugin>

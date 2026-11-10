@@ -1,0 +1,7 @@
+/.tmp/
+/.local/
+/.idea/
+/.gradle/
+/.kotlin/
+/build/
+__pycache__/
