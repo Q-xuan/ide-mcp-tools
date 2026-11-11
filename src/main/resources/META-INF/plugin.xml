@@ -2,7 +2,7 @@
     <id>dev.feiyu.ide-mcp</id>
     <name>IDE MCP Tools</name>
     <version>0.1.4</version>
-    <vendor>yuseus</vendor>
+    <vendor url="https://q-xuan.github.io/ide-mcp-tools/" email="heyuseus@gmail.com">yuseus</vendor>
     <idea-version since-build="263" until-build="263.*"/>
     <description>Adds run session control, debugging, and explicit database writes to GoLand's built-in MCP server.</description>
     <change-notes>Fixes a race when stopping a Go debug session immediately after resuming it.</change-notes>

@@ -3,6 +3,7 @@ name: Build and test
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -27,6 +28,16 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.14"
+
+      - name: Validate Marketplace version tag
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        shell: pwsh
+        run: |
+          [xml]$descriptor = Get-Content -Raw -LiteralPath 'src/main/resources/META-INF/plugin.xml'
+          $version = $descriptor.'idea-plugin'.version
+          if ($version -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$' -or $env:GITHUB_REF_NAME -cne "v$version") {
+            throw "Tag $env:GITHUB_REF_NAME must match plugin.xml version $version"
+          }
 
       - name: Download and verify GoLand SDK
         shell: pwsh
@@ -64,7 +75,40 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $packages = @(Get-ChildItem -LiteralPath '.tmp/build/distributions' -Filter 'ide-mcp-tools-*.zip' -File)
           if ($packages.Count -ne 1) { throw 'Expected one installable plugin ZIP' }
+          if ($env:GITHUB_EVENT_NAME -eq 'push' -and $env:GITHUB_REF_TYPE -eq 'tag') {
+            $releaseVersion = $env:GITHUB_REF_NAME.Substring(1)
+            if ($packages[0].Name -cne "ide-mcp-tools-$releaseVersion.zip") {
+              throw "Package $($packages[0].Name) does not match tag $env:GITHUB_REF_NAME"
+            }
+          }
           "path=$($packages[0].FullName)" >> $env:GITHUB_OUTPUT
+
+      - name: Verify Marketplace release
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          PLUGIN_ZIP: ${{ steps.package.outputs.path }}
+          VERIFIER_SHA256: d6cc1c1f17761bb5efff187f98b63fb792c7ef2a2fb9202bb5dbea05ebc02bfa
+        run: |
+          $verifierRoot = Join-Path $env:RUNNER_TEMP 'plugin-verifier'
+          New-Item -ItemType Directory -Path $verifierRoot -Force | Out-Null
+          $verifierJar = Join-Path $verifierRoot 'verifier-cli-1.411-all.jar'
+          $download = 'https://repo.maven.apache.org/maven2/org/jetbrains/intellij/plugins/verifier-cli/1.411/verifier-cli-1.411-all.jar'
+          curl.exe --fail --location --silent --show-error --retry 3 --connect-timeout 20 --max-time 180 --output $verifierJar $download
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ((Get-FileHash -LiteralPath $verifierJar -Algorithm SHA256).Hash -ne $env:VERIFIER_SHA256) {
+            throw 'Plugin Verifier SHA-256 mismatch'
+          }
+
+          $reports = Join-Path $verifierRoot 'report'
+          $runtime = Join-Path $env:GOLAND_HOME 'jbr'
+          $java = Join-Path $runtime 'bin/java.exe'
+          & $java "-Duser.home=$verifierRoot" -Xmx3g -jar $verifierJar check-plugin "$env:PLUGIN_ZIP" "$env:GOLAND_HOME" -runtime-dir $runtime -verification-reports-dir $reports -offline
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $verdicts = @(Get-ChildItem -LiteralPath $reports -Filter 'verification-verdict.txt' -File -Recurse)
+          if ($verdicts.Count -ne 1) { throw 'Expected one Plugin Verifier verdict' }
+          $verdict = (Get-Content -Raw -LiteralPath $verdicts[0].FullName).Trim()
+          if ($verdict -notmatch '^Compatible(?:$|[. ])') { throw "Plugin Verifier verdict: $verdict" }
 
       - name: Upload plugin ZIP
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -74,3 +118,22 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 14
+
+      - name: Submit update to JetBrains Marketplace
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          PLUGIN_ZIP: ${{ steps.package.outputs.path }}
+          MARKETPLACE_TOKEN: ${{ secrets.JETBRAINS_MARKETPLACE_TOKEN }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:MARKETPLACE_TOKEN) -or $env:MARKETPLACE_TOKEN -match '[\r\n]') {
+            throw 'Set the JETBRAINS_MARKETPLACE_TOKEN repository secret'
+          }
+          $response = Join-Path $env:RUNNER_TEMP 'marketplace-upload.json'
+          $status = "Authorization: Bearer $env:MARKETPLACE_TOKEN" |
+            curl.exe --silent --show-error --fail-with-body --connect-timeout 20 --max-time 180 --output $response --write-out '%{http_code}' --header '@-' --form-string 'xmlId=dev.feiyu.ide-mcp' --form "file=@$env:PLUGIN_ZIP" https://plugins.jetbrains.com/api/updates/upload
+          if ($LASTEXITCODE -ne 0 -or $status -notmatch '^2\d\d$') {
+            if (Test-Path -LiteralPath $response) { Get-Content -Raw -LiteralPath $response }
+            throw "Marketplace upload failed with HTTP $status"
+          }
+          "Marketplace accepted the update with HTTP $status"

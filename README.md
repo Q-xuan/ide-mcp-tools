@@ -57,6 +57,14 @@ GitHub 的 **Actions → Build and test** 会在推送到 `main` 或向 `main` �
 
 [Marketplace 审核要求](https://plugins.jetbrains.com/docs/marketplace/jetbrains-marketplace-approval-guidelines.html) · [首次上传流程](https://plugins.jetbrains.com/docs/marketplace/uploading-a-new-plugin.html)
 
+### 自动提交后续版本
+
+在 JetBrains Marketplace 的 **My Tokens** 生成发布 token，将它保存为 GitHub 仓库的 Actions Secret `JETBRAINS_MARKETPLACE_TOKEN`。发布新版本时，同时更新 `build.gradle.kts` 和 `plugin.xml` 的版本号，并更新 `plugin.xml` 的英文版本说明。
+
+将版本变更提交后推送对应的 Git 标签，例如 `v0.1.5`。**Build and test** 会校验标签与版本号，运行单测、构建 ZIP，并用 GoLand `263.7307.211` 的 SDK 运行 Plugin Verifier。通过后，工作流把同一份 ZIP 提交到 Marketplace 的 Stable 渠道审核。推送到 `main`、PR 和手动运行提供构建产物。
+
+[JetBrains 上传接口](https://plugins.jetbrains.com/docs/marketplace/plugin-upload.html) · [GitHub Actions Secrets](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets)
+
 ## 开源许可
 
 本项目采用 [MIT 许可证](LICENSE)。插件安装包也包含许可正文。
