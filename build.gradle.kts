@@ -1,7 +1,7 @@
 plugins { kotlin("jvm") version "2.3.20" }
 
 group = "dev.feiyu"
-version = "0.1.4"
+version = "0.1.5"
 repositories { mavenCentral() }
 java {
     sourceCompatibility = JavaVersion.VERSION_21

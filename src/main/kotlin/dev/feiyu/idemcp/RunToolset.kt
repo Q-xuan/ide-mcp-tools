@@ -8,7 +8,7 @@ import com.intellij.execution.RunnerAndConfigurationSettings
 import com.intellij.execution.Executor
 import com.intellij.execution.executors.DefaultDebugExecutor
 import com.intellij.execution.impl.ExecutionManagerImpl
-import com.intellij.execution.process.KillableProcessHandler
+import com.intellij.execution.KillableProcess
 import com.intellij.execution.process.ProcessHandler
 import com.intellij.execution.runners.ExecutionEnvironmentBuilder
 import com.intellij.execution.runners.ExecutionEnvironment
@@ -88,6 +88,13 @@ internal suspend fun waitForProcessExit(handler: ProcessHandler, timeoutMs: Int)
     return handler.isProcessTerminated
 }
 
+internal fun forceStop(handler: ProcessHandler) {
+    if (handler.isProcessTerminated) return
+    val killable = handler as? KillableProcess ?: mcpFail("该进程不支持强制终止")
+    if (!killable.canKillProcess()) mcpFail("该进程不支持强制终止")
+    killable.killProcess()
+}
+
 internal suspend fun stopRun(project: Project, id: String, force: Boolean, timeout: Int): JsonObject {
     require(timeout in 1..60_000) { "timeoutMs 必须为 1—60000" }
     val (descriptor, handler) = onEdt {
@@ -96,9 +103,7 @@ internal suspend fun stopRun(project: Project, id: String, force: Boolean, timeo
     }
     val requestStop = {
         if (force) {
-            val killable = handler as? KillableProcessHandler ?: mcpFail("该进程不支持强制终止")
-            if (!killable.canKillProcess()) mcpFail("该进程不支持强制终止")
-            killable.killProcess()
+            forceStop(handler)
         } else if (!handler.isProcessTerminating && !handler.isProcessTerminated) {
             ExecutionManagerImpl.stopProcess(handler)
         }

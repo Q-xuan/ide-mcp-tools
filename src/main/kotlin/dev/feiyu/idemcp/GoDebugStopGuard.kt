@@ -75,26 +75,26 @@ internal class GoDebugStopGuard(private val project: Project) : DebugStopGuard {
                 // A nonblocking backend state read confirms it without sending another halt.
                 val reply = process.requestState()
                 val target = handler.getUserData(LOCAL_RESUME_TARGET)
-                if (!waitedForInterrupt && target != null) {
-                    // A paused variable read can block the whole Delve RPC connection.
-                    // Use the same graceful interrupt as GoLand on its verified local child.
-                    val replied = withTimeoutOrNull(500) { reply.join(); true } == true
-                    waitedForInterrupt = !replied
-                    val stillResuming = !replied && onEdt {
-                        version == resumeVersion.get() && !session.isSuspended &&
-                            !handler.isProcessTerminating && !handler.isProcessTerminated
-                    }
-                    if (stillResuming && isLocalDelveChild(target) &&
-                        handler.replace(LOCAL_RESUME_TARGET, target, null)) {
-                        try {
-                            OSProcessUtil.terminateProcessGracefully(target.pid().toInt())
-                            LOG.debug("Sent graceful interrupt to the local Go debug target after a stalled Delve state request")
-                        } catch (e: UnsupportedOperationException) {
-                            LOG.debug("Could not interrupt the local Go debug target", e)
+                val state = if (!waitedForInterrupt && target != null) {
+                    awaitDebuggerReply(reply, 500) {
+                        // A paused variable read can block the whole Delve RPC connection.
+                        // Use the same graceful interrupt as GoLand on its verified local child.
+                        waitedForInterrupt = true
+                        val stillResuming = onEdt {
+                            version == resumeVersion.get() && !session.isSuspended &&
+                                !handler.isProcessTerminating && !handler.isProcessTerminated
+                        }
+                        if (stillResuming && isLocalDelveChild(target) &&
+                            handler.replace(LOCAL_RESUME_TARGET, target, null)) {
+                            try {
+                                OSProcessUtil.terminateProcessGracefully(target.pid().toInt())
+                                LOG.debug("Sent graceful interrupt to the local Go debug target after a stalled Delve state request")
+                            } catch (e: UnsupportedOperationException) {
+                                LOG.debug("Could not interrupt the local Go debug target", e)
+                            }
                         }
                     }
-                }
-                val state = reply.await()
+                } else reply.await()
                 if ((state?.running == true || state?.exited == true) && onEdt {
                     val sameResume = version == resumeVersion.get()
                     if (sameResume) stop()

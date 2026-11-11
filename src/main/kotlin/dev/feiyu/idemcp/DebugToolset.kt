@@ -8,6 +8,7 @@ import com.intellij.mcpserver.annotations.McpToolHintValue.TRUE
 import com.intellij.mcpserver.mcpFail
 import com.intellij.mcpserver.project
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.application.EDT
 import com.intellij.ui.SimpleColoredText
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.xdebugger.*
@@ -42,16 +43,38 @@ private fun paused(session: XDebugSession) {
     if (!session.isSuspended) mcpFail("调试会话未暂停，请先 pause 或等待断点")
 }
 
+private suspend fun <T> withPausedRead(session: XDebugSession, block: suspend (PausedDebugRead) -> T): T {
+    var registered: PausedDebugRead? = null
+    try {
+        onEdt {
+            paused(session)
+            val context = session.suspendContext ?: mcpFail("没有暂停上下文")
+            val read = PausedDebugRead(session, context)
+            registered = read
+            session.addSessionListener(read.listener)
+        }
+        val read = checkNotNull(registered)
+        return read.run {
+            val value = block(read)
+            onEdt { read.check() }
+            value
+        }
+    } finally {
+        registered?.let { read ->
+            withContext(NonCancellable + Dispatchers.EDT) { session.removeSessionListener(read.listener) }
+        }
+    }
+}
+
 // 直接把 XDebugger 的回调转为有界协程，不保存帧、变量或第二份会话状态。
-private suspend fun frames(session: XDebugSession, limit: Int): List<XStackFrame> = withTimeout(5000) {
+private suspend fun frames(read: PausedDebugRead, limit: Int): List<XStackFrame> = withTimeout(5000) {
     val result = CompletableDeferred<List<XStackFrame>>(currentCoroutineContext()[Job])
     val collected = mutableListOf<XStackFrame>()
     onEdt {
-        paused(session)
-        val context = session.suspendContext ?: mcpFail("没有暂停上下文")
-        val stack = context.activeExecutionStack ?: mcpFail("没有当前执行线程")
+        read.check()
+        val stack = read.context.activeExecutionStack ?: mcpFail("没有当前执行线程")
         stack.computeStackFrames(0, object : XExecutionStack.XStackFrameContainer {
-            override fun isObsolete() = !result.isActive
+            override fun isObsolete() = !result.isActive || read.isObsolete
             override fun errorOccurred(errorMessage: String) { result.completeExceptionally(IllegalStateException(errorMessage)) }
             override fun addStackFrames(stackFrames: MutableList<out XStackFrame>, last: Boolean) {
                 synchronized(collected) {
@@ -64,15 +87,15 @@ private suspend fun frames(session: XDebugSession, limit: Int): List<XStackFrame
     result.await()
 }
 
-private suspend fun frame(session: XDebugSession, index: Int): XStackFrame {
+private suspend fun frame(read: PausedDebugRead, index: Int): XStackFrame {
     require(index in 0..199) { "frameIndex 必须为 0—199" }
-    return frames(session, index + 1).getOrNull(index) ?: mcpFail("帧序号不存在：$index")
+    return frames(read, index + 1).getOrNull(index) ?: mcpFail("帧序号不存在：$index")
 }
 
-private suspend fun evaluate(session: XDebugSession, frame: XStackFrame, expression: String): XValue = withTimeout(5000) {
+private suspend fun evaluate(read: PausedDebugRead, frame: XStackFrame, expression: String): XValue = withTimeout(5000) {
     val result = CompletableDeferred<XValue>(currentCoroutineContext()[Job])
     onEdt {
-        paused(session)
+        read.check()
         val evaluator = frame.evaluator ?: mcpFail("当前调试器不支持表达式求值")
         evaluator.evaluate(expression, object : XDebuggerEvaluator.XEvaluationCallback {
             override fun evaluated(value: XValue) { result.complete(value) }
@@ -82,16 +105,20 @@ private suspend fun evaluate(session: XDebugSession, frame: XStackFrame, express
     result.await()
 }
 
-private suspend fun children(value: XValueContainer, limit: Int): List<Pair<String, XValueContainer>> = withTimeout(5000) {
-    val result = CompletableDeferred<List<Pair<String, XValueContainer>>>(currentCoroutineContext()[Job])
+internal fun debugChildrenNode(
+    read: PausedDebugRead,
+    value: XValueContainer,
+    limit: Int,
+    result: CompletableDeferred<List<Pair<String, XValueContainer>>>,
+): XCompositeNode {
     val collected = mutableListOf<Pair<String, XValueContainer>>()
     // 复用平台节点对旧版分页回调的转发。这里只收集数据，所有回调都不操作树。
-    val node = object : XValueContainerNode<XValueContainer>(null, null, false, value) {
-        override fun isObsolete() = !result.isActive
+    return object : XValueContainerNode<XValueContainer>(null, null, false, value) {
+        override fun isObsolete() = !result.isActive || read.isObsolete
         override fun setAlreadySorted(alreadySorted: Boolean) {}
         override fun setErrorMessage(message: String) { result.completeExceptionally(IllegalStateException(message)) }
         override fun setErrorMessage(message: String, link: XDebuggerTreeNodeHyperlink?) { setErrorMessage(message) }
-        override fun setMessage(message: String, icon: Icon?, attributes: SimpleTextAttributes, link: XDebuggerTreeNodeHyperlink?) {}
+        override fun setMessage(message: String, icon: Icon?, attributes: SimpleTextAttributes, link: XDebuggerTreeNodeHyperlink?) { setErrorMessage(message) }
         override fun tooManyChildren(remaining: Int, addNextChildren: Runnable) {
             synchronized(collected) { result.complete(collected.take(limit)) }
         }
@@ -104,15 +131,21 @@ private suspend fun children(value: XValueContainer, limit: Int): List<Pair<Stri
             }
         }
     }
-    onEdt { value.computeChildren(node) }
+}
+
+private suspend fun children(read: PausedDebugRead, value: XValueContainer, limit: Int): List<Pair<String, XValueContainer>> = withTimeout(5000) {
+    val result = CompletableDeferred<List<Pair<String, XValueContainer>>>(currentCoroutineContext()[Job])
+    val node = debugChildrenNode(read, value, limit, result)
+    onEdt { read.check(); value.computeChildren(node) }
     result.await()
 }
 
-private suspend fun presentation(value: XValue): JsonObject = withTimeout(5000) {
+private suspend fun presentation(read: PausedDebugRead, value: XValue): JsonObject = withTimeout(5000) {
     val result = CompletableDeferred<JsonObject>(currentCoroutineContext()[Job])
     onEdt {
+        read.check()
         value.computePresentation(object : XValueNode {
-            override fun isObsolete() = !result.isActive
+            override fun isObsolete() = !result.isActive || read.isObsolete
             override fun setFullValueEvaluator(evaluator: XFullValueEvaluator) {}
             override fun setPresentation(icon: Icon?, type: String?, text: String, hasChildren: Boolean) {
                 result.complete(buildJsonObject {
@@ -196,13 +229,16 @@ class DebugToolset : McpToolset {
         require(limit in 1..200)
         val project = currentCoroutineContext().project
         val session = onEdt { findDebug(project, sessionId) }
-        val frames = frames(session, limit)
-        return onEdt {
-            JsonArray(frames.mapIndexed { i, f -> buildJsonObject {
-                put("index", i)
-                put("name", SimpleColoredText().also(f::customizePresentation).toString())
-                f.sourcePosition?.let { put("file", it.file.path); put("line", it.line + 1) }
-            } }).toString()
+        return withPausedRead(session) { read ->
+            val frames = frames(read, limit)
+            onEdt {
+                read.check()
+                JsonArray(frames.mapIndexed { i, f -> buildJsonObject {
+                    put("index", i)
+                    put("name", SimpleColoredText().also(f::customizePresentation).toString())
+                    f.sourcePosition?.let { put("file", it.file.path); put("line", it.line + 1) }
+                } }).toString()
+            }
         }
     }
 
@@ -217,15 +253,17 @@ class DebugToolset : McpToolset {
         require(limit in 1..100)
         val project = currentCoroutineContext().project
         val session = onEdt { findDebug(project, sessionId) }
-        val frame = frame(session, frameIndex)
-        val target = if (expression == null) frame else evaluate(session, frame, expression)
-        val values = children(target, limit).flatMap { (name, value) ->
-            if (value is XValueGroup) children(value, limit) else listOf(name to value)
-        }.take(limit)
-        JsonArray(values.map { (name, value) -> buildJsonObject {
-            put("name", name)
-            if (value is XValue) for ((key, item) in presentation(value)) put(key, item)
-        } }).toString()
+        withPausedRead(session) { read ->
+            val frame = frame(read, frameIndex)
+            val target = if (expression == null) frame else evaluate(read, frame, expression)
+            val values = children(read, target, limit).flatMap { (name, value) ->
+                if (value is XValueGroup) children(read, value, limit) else listOf(name to value)
+            }.take(limit)
+            JsonArray(values.map { (name, value) -> buildJsonObject {
+                put("name", name)
+                if (value is XValue) for ((key, item) in presentation(read, value)) put(key, item)
+            } }).toString()
+        }
     }
 
     @McpTool
@@ -237,6 +275,8 @@ class DebugToolset : McpToolset {
     ): String {
         val project = currentCoroutineContext().project
         val session = onEdt { findDebug(project, sessionId) }
-        return presentation(evaluate(session, frame(session, frameIndex), expression)).toString()
+        return withPausedRead(session) { read ->
+            presentation(read, evaluate(read, frame(read, frameIndex), expression)).toString()
+        }
     }
 }

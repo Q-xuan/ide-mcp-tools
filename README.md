@@ -6,9 +6,9 @@ IDE MCP Tools adds run session control, debugging, and explicit database writes 
 
 ## 安装并连接
 
-0.1.4 面向 GoLand 2026.3（IDE 构建号 `263.*`）。可在 GoLand 的 **帮助 → 关于** 查看构建号。GoLand 2026.2（`262.*`）使用 0.1.1。
+0.1.5 面向 GoLand 2026.3（IDE 构建号 `263.*`）。可在 GoLand 的 **帮助 → 关于** 查看构建号。GoLand 2026.2（`262.*`）使用 0.1.1。
 
-1. 打开 **设置 → 插件 → 齿轮 → 从磁盘安装插件**，选择 `ide-mcp-tools-0.1.4.zip`。如果 IDE 提示重启，重启后继续。
+1. 打开 **设置 → 插件 → 齿轮 → 从磁盘安装插件**，选择 `ide-mcp-tools-0.1.5.zip`。如果 IDE 提示重启，重启后继续。
 2. 在 **设置 → 工具 → MCP Server** 启用服务，按页面提示连接你的 MCP 客户端。已经连接的客户端可以重新连接一次，刷新工具列表。
 3. 打开目标项目。若同时开了多个项目，向客户端说明项目的完整目录。先试一句「列出这个项目正在运行的 Run 和 Debug 会话」，对应工具是 `list_run_sessions`。
 
@@ -29,6 +29,7 @@ IDE MCP Tools adds run session control, debugging, and explicit database writes 
 - Run 和 Debug 的会话 ID 来自本插件的会话列表。重启后请用新的 ID。热加载前启动的会话若缺少原始配置记录，可列出和停止，重启会被拒绝。
 - 首次启动调试时 GoLand 可能需要先编译。启动调用超时后，先列出会话确认程序有没有启动，再决定是否重试。
 - 停止默认等待 10 秒，最长可设 60 秒。`terminating` 表示仍在退出。Go 调试会话刚恢复时，插件先核对 Delve 的实际状态。如果 Windows 上的本地调试连接卡住，插件可向已核实的调试目标发送一次正常退出信号。遇到等待超时，请重新列出会话确认进程状态。
+- 栈帧、变量和求值绑定到读取开始时的暂停现场。恢复、停止或暂停上下文变化时，工具会返回状态变化错误。
 - 调试求值可能调用函数或改变程序状态。若涉及副作用且调用超时，先核对运行状态。断点源码行号从 1 开始，调用帧序号从 0 开始。
 - `refresh_database_schema` 使用 IDE 的元数据模型。完全未发现的 schema 会返回找不到，已加载的 schema 可能直接返回缓存状态。0.1.4 的数据库实测范围是 SQLite。
 - 元数据探针只读对象数量和加载状态。它的工具内耗时包含原生确认和模型读取。客户端往返耗时可用项目里的 `benchmark_database.py` 单独测量。
@@ -41,7 +42,7 @@ IDE MCP Tools adds run session control, debugging, and explicit database writes 
 python -X utf8 build.py --ide-home "C:/path/to/GoLand" test packagePlugin
 ```
 
-安装包写到 `.tmp/build/distributions/ide-mcp-tools-0.1.4.zip`。
+安装包写到 `.tmp/build/distributions/ide-mcp-tools-0.1.5.zip`。
 
 GitHub 的 **Actions → Build and test** 会在推送到 `main` 或向 `main` 发起拉取请求时运行，也可以手动触发。工作流校验并使用固定的 GoLand 构建号 `263.7307.211`，通过单测后可从该次运行的 **Artifacts** 下载插件 ZIP。
 
@@ -49,9 +50,9 @@ GitHub 的 **Actions → Build and test** 会在推送到 `main` 或向 `main` �
 
 ## JetBrains Marketplace 提交
 
-在 Marketplace 的 **Description** 字段可使用本文首段英文介绍。0.1.4 安装包已包含英文版本说明。
+在 Marketplace 的 **Description** 字段可使用本文首段英文介绍。0.1.5 安装包已包含英文版本说明。
 
-> Fixes a race when stopping a Go debug session immediately after resuming it.
+> Improves debugger error reporting, rejects reads from outdated pause contexts, and supports force stopping compatible debug sessions.
 
 首次上传需要填写有效的发布者网站和联系邮箱，提供原创的 40 × 40 SVG 图标和最终用户许可协议。选择开源许可时还需填写可访问的源码链接。这些发布资料需在提交前补齐。JetBrains 会对上传包做兼容性检查和人工审核。
 

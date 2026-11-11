@@ -1,19 +1,44 @@
 package dev.feiyu.idemcp
 
 import com.intellij.execution.process.ProcessHandler
+import com.intellij.execution.KillableProcess
+import com.intellij.mcpserver.McpExpectedError
 import kotlinx.coroutines.*
 import org.junit.Assert.*
 import org.junit.Test
 import java.io.OutputStream
 
 class RunLifecycleTest {
-    private class TestProcess : ProcessHandler() {
+    private open class TestProcess : ProcessHandler() {
         init { startNotify() }
         override fun destroyProcessImpl() { finish() }
         override fun detachProcessImpl() { notifyProcessDetached() }
         override fun detachIsDefault() = false
         override fun getProcessInput(): OutputStream? = null
         fun finish() { notifyProcessTerminated(0) }
+    }
+
+    private class KillableTestProcess(private val supported: Boolean) : TestProcess(), KillableProcess {
+        var kills = 0
+        override fun canKillProcess() = supported
+        override fun killProcess() { kills++; finish() }
+    }
+
+    @Test fun `force stop supports a wrapper implementing KillableProcess`() {
+        val process = KillableTestProcess(true)
+        forceStop(process)
+        assertEquals(1, process.kills)
+        assertTrue(process.isProcessTerminated)
+        forceStop(process)
+        assertEquals(1, process.kills)
+    }
+
+    @Test fun `unsupported force stop does not kill the process`() {
+        val process = KillableTestProcess(false)
+        assertThrows(McpExpectedError::class.java) { forceStop(process) }
+        assertEquals(0, process.kills)
+        assertFalse(process.isProcessTerminated)
+        process.finish()
     }
 
     @Test fun `退出前不报告已停止`() = runBlocking {
